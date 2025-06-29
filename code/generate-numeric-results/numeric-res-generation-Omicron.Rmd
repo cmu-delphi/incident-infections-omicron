@@ -1,0 +1,282 @@
+---
+title: "Numeric Results Generation"
+author: "Rachel Lobay"
+date: "2025-01-15"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+```
+
+
+# Numeric results generation for From Wastewater to Infection Estimates: Incident COVID-19 Infections during Omicron in the U.S.
+
+This document enables the generation of numeric results that appear in From Wastewater to Infection Estimates: Incident COVID-19 Infections during Omicron in the U.S.. We separate these by sub-section and note that some of these results are calculated as in the companion paper titled Retrospective estimation of latent COVID-19 infections before Omicron in the U.S..
+
+## Load packages and data 
+
+Packages:
+```{r load-packages}
+library(tidyverse)
+library(covidcast)
+```
+
+Data:
+```{r load-data}
+# Load data
+ww_adj_df <- readRDS("quantiles_ww_adj_df.RDS")
+unadj_at_df_list <- readRDS("unadj_at_df_list_Mar20.RDS") 
+unadj_at_df <- bind_rows(unadj_at_df_list)
+
+omicron_subvariant_prop <- readRDS("omicron_subvariant_prop.RDS")
+
+rt_df <- readRDS("rt_df.RDS")
+rt_df_cases <- readRDS("rt_df_cases.RDS")
+
+original <- readRDS("delta_omicron_coef_mat.RDS")
+okada <- readRDS("delta_omicron_coef_mat_sens_3.5_3.0.RDS")
+huisman <- readRDS("delta_omicron_coef_mat_sens_5.0_0.5.RDS")
+
+pop_df <- readRDS("pop_df.rds")
+pop_used <- "population_2022"
+
+```
+
+# Results
+
+## Inverse reporting ratios 
+
+```{r inverse-reporting-ratios}
+# Find max at_val for each geo_value
+unadj_at_df %>%
+  group_by(geo_value) %>%
+  summarise(max_at_val = max(at_val, na.rm = TRUE)) %>%
+  arrange(desc(max_at_val))
+# Conclusion: Only HI and NC's inverse reporting ratios do not surpass 20.
+
+# Check that HI's inverse reporting ratios are between 5 and 20
+unadj_at_df %>%
+  filter(geo_value == "HI") %>%
+  summarise(min_at_val = min(at_val, na.rm = TRUE),
+            max_at_val = max(at_val, na.rm = TRUE))
+
+```
+
+## Daily infection rates main analysis
+
+```{r max-inf-rate}
+# Max median infection rate per state over Omicron
+max_adj_inf_rate = ww_adj_df %>% 
+   group_by(geo_value) %>%
+   #filter(date <= as.Date("2021-11-01")) %>%
+   summarise(max_adj_rate = max(adj_inf_q50_rate)) %>%
+   arrange(desc(max_adj_rate))
+
+max_adj_inf_rate = max_adj_inf_rate %>% pull(max_adj_rate)
+
+top_five_inf_rate <- ww_adj_df %>%
+  filter(adj_inf_q50_rate %in% max_adj_inf_rate[1:5]) %>% # Top 5
+  arrange(desc(adj_inf_q50_rate)) %>% 
+  select(geo_value, time_value, adj_inf_q50_rate, adj_infect_q05_rate, adj_infect_q95_rate)
+top_five_inf_rate
+
+# Case rates max ON THE DAY of the infection peak for the top two
+ww_adj_df %>% filter((geo_value == "NY" & time_value == "2022-12-24") | (geo_value == "HI" & time_value == "2022-06-04")) %>% 
+  select(time_value, geo_value, cases_rate_7d_av)
+
+# Case rates max NEAR THE TIME of the peak for the top three (could be a bit before or after depending on reporting around that time)
+# So consider ~1 month on either side of the peak infections day
+ww_adj_df %>% 
+  filter((geo_value == "NY" & time_value >= as.Date("2022-12-24") - 30  & time_value <= as.Date("2022-12-24") + 30) | (geo_value == "HI" & time_value >= as.Date("2022-06-04") - 30  & time_value <= as.Date("2022-06-04") + 30) | (geo_value == "NV" & time_value >= as.Date("2022-11-19") - 30  & time_value <= as.Date("2022-11-19") + 30)) %>% 
+  arrange(desc(cases_rate_7d_av)) %>%
+  group_by(geo_value) %>% 
+  slice(1) %>% 
+  select(time_value, geo_value, cases_rate_7d_av)
+# Not as relevant for either as the case peak for each is rather flat around this time (hard to discern a maximum)
+```
+
+## Brief peak investigation
+
+```{r CA-peak-investigation-mid-late-2022}
+# Obtain max median infection rate for CA when cases track infections relatively well in mid-2022
+CA_ww_adj_df_subset <- ww_adj_df %>% 
+  filter(geo_value == "CA" & time_value >= "2022-07-01" & time_value <= "2022-09-01") 
+
+max_adj_inf_rate_CA = CA_ww_adj_df_subset %>%
+  summarise(max_adj_rate = max(adj_inf_q50_rate)) %>%
+  arrange(desc(max_adj_rate))
+
+max_adj_inf_rate_CA = max_adj_inf_rate_CA %>% pull(max_adj_rate)
+
+top_CA_inf_rate_subset <- CA_ww_adj_df_subset %>%
+  filter(adj_inf_q50_rate %in% max_adj_inf_rate_CA) %>% 
+  select(geo_value, time_value, adj_inf_q50_rate, adj_infect_q05_rate, adj_infect_q95_rate)
+top_CA_inf_rate_subset
+
+# Case rates max NEAR THE TIME of this peak
+# So consider ~1 month around the peak infections day
+ww_adj_df %>% 
+  filter((geo_value == "CA" & time_value >= as.Date("2022-07-01") - 15  & time_value <= as.Date("2022-09-01") + 15)) %>% 
+  arrange(desc(cases_rate_7d_av)) %>%
+  slice(1) %>% 
+  select(time_value, geo_value, cases_rate_7d_av)
+
+# Obtain max median infection-based Rt for CA for the mid 2022 peak in infections and cases
+CA_rt_df_subset <- rt_df %>% 
+  filter(state == "CA" & time_value >= "2022-07-01" & time_value <= "2022-09-01") 
+
+max_rt_CA = CA_rt_df_subset %>%
+  summarise(max_rt = max(Rt)) %>%
+  arrange(desc(max_rt))
+
+max_rt_value_CA = max_rt_CA %>% pull(max_rt)
+
+top_CA_rt_subset <- CA_rt_df_subset %>%
+  filter(Rt %in% max_rt_value_CA)
+top_CA_rt_subset
+
+# Case Rt max NEAR THE TIME of this peak
+# So consider ~1 month around the peak infections day
+rt_df_cases %>% 
+  filter(state == "CA" & time_value >= as.Date("2022-07-01") - 15  & time_value <= as.Date("2022-09-01") + 15) %>% 
+  arrange(desc(Rt)) %>%
+  slice(1) 
+
+
+# Next, obtain max median infection-based Rt for CA for the late 2022 peak in infections and cases
+CA_rt_df_subset <- rt_df %>% 
+  filter(state == "CA" & time_value >= "2022-09-01" & time_value <= "2022-12-01") 
+
+max_rt_CA = CA_rt_df_subset %>%
+  summarise(max_rt = max(Rt)) %>%
+  arrange(desc(max_rt))
+
+max_rt_value_CA = max_rt_CA %>% pull(max_rt)
+
+top_CA_rt_subset <- CA_rt_df_subset %>%
+  filter(Rt %in% max_rt_value_CA)
+top_CA_rt_subset
+
+# Case Rt max NEAR THE TIME of this peak
+# So consider ~1 month around the peak infections day
+rt_df_cases %>% 
+  filter(state == "CA" & time_value >= as.Date("2022-11-12") - 15  & time_value <= as.Date("2022-11-12") + 15) %>% 
+  arrange(desc(Rt)) %>%
+  slice(1) 
+
+```
+
+## Subvariant switches by state
+
+```{r switch-dates}
+# Subvariant switch dates (roughly)
+# Keep only top variant for each state and date
+df_top_variant <- df_long %>%
+  group_by(State, Date) %>%
+  slice_max(order_by = Prop, n = 1) %>%
+  ungroup()
+
+# Manual check
+# df_top_variant %>% filter(State == "MN") %>% View()
+
+# Get the first date where the subvariant switch happened per state.
+# 22C to 22B 
+switch_dates_22C_22B <- df_top_variant %>%
+  arrange(State, Date) %>%
+  group_by(State) %>%
+  mutate(
+    prev_variant = lag(Variant),
+    switched_22B_to_22C = (prev_variant == "22C" & Variant == "22B")
+  ) %>%
+  filter(switched_22B_to_22C) %>%
+  summarise(switch_date = first(Date)) %>%
+  ungroup()
+
+switch_dates_22C_22B 
+
+# 22B to 22E
+switch_dates_22B_22E <- df_top_variant %>%
+  arrange(State, Date) %>%
+  group_by(State) %>%
+  mutate(
+    prev_variant = lag(Variant),
+    switched_22B_to_22C = (prev_variant == "22B" & Variant == "22E")
+  ) %>%
+  filter(switched_22B_to_22C) %>%
+  summarise(switch_date = first(Date)) %>%
+  ungroup()
+
+switch_dates_22B_22E 
+```
+
+## Cases-to-infections ratio by state and variant
+
+```{r case-infect-ratio}
+# Compute the percentage of infections eventually reported as cases for each state over the Omicron period we're considering
+# This measure indicates how many of the total estimated infections were captured as reported cases over the time period of interest.
+# Use the median infection counts for each state
+# And raw cases (not 7-day-averaged cases) for a more pure comparison of raw vs raw
+
+# Obtain raw cases
+cases_raw_df <- covidcast_signal("jhu-csse", "confirmed_incidence_num", # Number of new confirmed COVID-19 cases, daily
+                          start_day = ww_adj_df$time_value[1], end_day = ww_adj_df$time_value[length(ww_adj_df$time_value)],
+                          as_of = as.Date("2023-07-06"),
+                          geo_type = "state") %>%
+  select(geo_value, time_value, case_count_raw = value) %>% 
+  mutate(geo_value = toupper(geo_value))
+
+# Select only the needed columns in each data frame to reduce code
+ww_adj_df_omic <- ww_adj_df %>% select(time_value, geo_value, adj_infect_q50) %>% left_join(cases_raw_df, by = c("geo_value", "time_value"))
+
+# Function to sum adj infect and case counts over the relevant time period
+summarise_df_over_period <- function(prepped_df){
+  prepped_df %>%
+  group_by(geo_value) %>%
+  summarise(sum_adj_infect = sum(adj_infect_q50),
+            sum_case_count_raw = sum(case_count_raw)) %>%
+  mutate(cases_over_infect_pct = (sum_case_count_raw / sum_adj_infect) * 100)
+}
+
+
+# 1. Omicron
+states_cases_infect_pct_Omic <- summarise_df_over_period(ww_adj_df_omic)
+
+# Which state had smallest number of infections reported over the Omicron period?
+states_cases_infect_pct_Omic %>% 
+  arrange(cases_over_infect_pct)
+
+# Cases account for at least 5% of infections over the Omicron period considered
+states_cases_infect_pct_Omic %>%
+  filter(cases_over_infect_pct >= 5) %>%
+  arrange(desc(cases_over_infect_pct)) 
+
+# Cases account for at least 10% of infections over the Omicron period considered
+states_cases_infect_pct_Omic %>%
+  filter(cases_over_infect_pct >= 10) %>%
+  arrange(desc(cases_over_infect_pct)) # 5 states
+
+# Cases account for at least 15% of infections over the Omicron period considered
+states_cases_infect_pct_Omic %>%
+  filter(cases_over_infect_pct >= 15) %>%
+  arrange(desc(cases_over_infect_pct)) 
+
+# Cases account for at least 20% of infections over the Omicron period considered
+states_cases_infect_pct_Omic %>%
+  filter(cases_over_infect_pct >= 20) %>%
+  arrange(desc(cases_over_infect_pct)) # None
+
+```
+
+## Omicron shedding rate brief mean and sd comparisons
+
+```{shedding}
+# Compute mean and sds for Omicron shedding rates for each of the three types (supplement)
+mean(original[,2])
+mean(okada[,2])
+mean(huisman[,2])
+
+sd(original[,2])
+sd(okada[,2])
+sd(huisman[,2])
+```
