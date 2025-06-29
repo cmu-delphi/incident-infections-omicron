@@ -4,7 +4,7 @@ The following R script files with are
 used to run an experiment and to save the results. 
 The below lists the main files in the order they should be run. 
 
-### Part 1: Extracting case data, obtaining the delay distribution estimates, and performing the deconvolutions
+### Main code files
 
 * `01_deconvolve_daily_reinfects.R` and `01_deconvolve_weekly_reinfects.R` are for deconvolving daily, 
   weekly or biweekly reinfections back to the approximate date of infection onset.
